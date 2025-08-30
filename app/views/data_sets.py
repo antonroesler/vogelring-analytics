@@ -11,7 +11,7 @@ import streamlit as st
 from data import load_data
 from util.col_mapping import mapping
 from util.storage import STORAGE_DIR, load_views, load_view
-from util.dates import format_date_columns_for_display
+from util.dates import format_date_columns_for_display, prepare_dataframe_for_display
 
 
 DATASETS_DIR = STORAGE_DIR / "datasets"
@@ -172,8 +172,24 @@ def render_data_sets() -> None:
         subset_mask = included_series if not show_hidden else pd.Series([True] * len(df_work))
         subset_idx = subset_mask[subset_mask].index
         disp = df_work.loc[subset_idx, view_cols_existing].rename(columns=mapping)
-        disp = format_date_columns_for_display(disp)
+        disp = prepare_dataframe_for_display(disp, source_df=df_work.loc[subset_idx])
         disp.insert(0, "Aufnehmen", included_series.loc[subset_idx].tolist())
+
+        link_cfg: dict[str, Any] = {}
+        try:
+            LinkColumn = getattr(st.column_config, "LinkColumn", None)
+            if LinkColumn is not None:
+                link_cfg = {
+                    "Eintrag": LinkColumn("Eintrag", help="Öffnen in neuem Tab", width="small", display_text="Öffnen"),
+                }
+            else:
+                URLColumn = getattr(st.column_config, "URLColumn", None)
+                if URLColumn is not None:
+                    link_cfg = {
+                        "Eintrag": URLColumn("Eintrag", help="Öffnen in neuem Tab", width="small"),
+                    }
+        except Exception:
+            link_cfg = {}
 
         edited = st.data_editor(
             disp,
@@ -181,6 +197,7 @@ def render_data_sets() -> None:
             hide_index=True,
             num_rows="fixed",
             key="loaded_dataset_editor",
+            column_config=link_cfg or None,
         )
         # Push edited flags back to dataset df
         updated_flags = pd.Series(edited["Aufnehmen"].astype(bool).tolist(), index=subset_idx)
@@ -238,14 +255,31 @@ def render_data_sets() -> None:
         st.session_state.included_state = [True] * len(working)
     # Use data_editor with a boolean column
     display_df = working[view_columns].rename(columns=mapping)
-    display_df = format_date_columns_for_display(display_df)
+    display_df = prepare_dataframe_for_display(display_df, source_df=working)
     display_df.insert(0, "Aufnehmen", st.session_state.included_state)
+    link_cfg2: dict[str, Any] = {}
+    try:
+        LinkColumn = getattr(st.column_config, "LinkColumn", None)
+        if LinkColumn is not None:
+            link_cfg2 = {
+                "Eintrag": LinkColumn("Eintrag", help="Öffnen in neuem Tab", width="small", display_text="Öffnen"),
+            }
+        else:
+            URLColumn = getattr(st.column_config, "URLColumn", None)
+            if URLColumn is not None:
+                link_cfg2 = {
+                    "Eintrag": URLColumn("Eintrag", help="Öffnen in neuem Tab", width="small"),
+                }
+    except Exception:
+        link_cfg2 = {}
+
     edited = st.data_editor(
         display_df,
         use_container_width=True,
         hide_index=True,
         num_rows="fixed",
         key="dataset_editor",
+        column_config=link_cfg2 or None,
     )
     # Persist updated included mask in session state
     st.session_state.included_state = edited["Aufnehmen"].astype(bool).tolist()
@@ -272,8 +306,25 @@ def render_data_sets() -> None:
         if st.button("Vorschau anzeigen"):
             preview_df = working[included_mask.values]
             preview_df = preview_df[view_columns].rename(columns=mapping)
-            preview_df = format_date_columns_for_display(preview_df)
-            st.dataframe(preview_df, use_container_width=True, hide_index=True)
+            preview_df = prepare_dataframe_for_display(preview_df, source_df=working[included_mask.values])
+            link_cfg3: dict[str, Any] = {}
+            try:
+                LinkColumn = getattr(st.column_config, "LinkColumn", None)
+                if LinkColumn is not None:
+                    link_cfg3 = {
+                        "Eintrag": LinkColumn(
+                            "Eintrag", help="Öffnen in neuem Tab", width="small", display_text="Öffnen"
+                        ),
+                    }
+                else:
+                    URLColumn = getattr(st.column_config, "URLColumn", None)
+                    if URLColumn is not None:
+                        link_cfg3 = {
+                            "Eintrag": URLColumn("Eintrag", help="Öffnen in neuem Tab", width="small"),
+                        }
+            except Exception:
+                link_cfg3 = {}
+            st.dataframe(preview_df, use_container_width=True, hide_index=True, column_config=link_cfg3 or None)
     with col_b:
         if st.button("Datensatz speichern"):
             if not name:

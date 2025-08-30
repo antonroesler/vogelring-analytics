@@ -69,8 +69,31 @@ def _apply_filters(df: pd.DataFrame, filters: list[dict[str, Any]]) -> pd.DataFr
 def _display_dataframe(df: pd.DataFrame, selected_columns: list[str] | None = None) -> None:
     cols = selected_columns or _internal_columns(df)
     df_show = df[cols].rename(columns=mapping)
-    df_show = format_date_columns_for_display(df_show)
-    st.dataframe(df_show, use_container_width=True, hide_index=True)
+    df_show = prepare_dataframe_for_display(df_show, source_df=df)
+
+    link_cfg: dict[str, Any] = {}
+    try:
+        # Prefer LinkColumn if available
+        LinkColumn = getattr(st.column_config, "LinkColumn", None)
+        if LinkColumn is not None:
+            link_cfg = {
+                "Eintrag": LinkColumn("Eintrag", help="Öffnen in neuem Tab", width="small", display_text="Öffnen"),
+            }
+        else:
+            URLColumn = getattr(st.column_config, "URLColumn", None)
+            if URLColumn is not None:
+                link_cfg = {
+                    "Eintrag": URLColumn("Eintrag", help="Öffnen in neuem Tab", width="small"),
+                }
+    except Exception:
+        link_cfg = {}
+
+    st.dataframe(
+        df_show,
+        use_container_width=True,
+        hide_index=True,
+        column_config=link_cfg or None,
+    )
 
 
 def _columns_selector_ui(df: pd.DataFrame, col_count: int = 4) -> list[str]:

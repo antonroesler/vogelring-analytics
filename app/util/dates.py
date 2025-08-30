@@ -63,46 +63,43 @@ def format_date_columns_for_display(
 
 
 def add_vogelring_link_column(df: pd.DataFrame, source_df: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Add a clickable link column to vogelring.com/entries/<id> if 'id' column exists.
-    
+    """Add a URL column ("Eintrag") for vogelring.com/entries/<id> when 'id' exists.
+
+    The result is suitable for Streamlit's LinkColumn via column_config. We return
+    plain URL strings (not HTML) so Streamlit can render clickable links. The
+    function aligns rows by index and requires that ``df`` and ``source_df``
+    have equal length and compatible indices.
+
     Args:
-        df: The display dataframe (may not have 'id' column if user filtered it out)
-        source_df: The source dataframe that should contain the 'id' column
-        
+        df: The dataframe prepared for display (may not include 'id').
+        source_df: The source dataframe that contains the 'id' column.
+
     Returns:
-        DataFrame with 'Link' column added on the right side
+        A copy of ``df`` with a rightmost column 'Eintrag' containing URL strings.
     """
     df_out = df.copy()
-    
-    # Use source_df if provided, otherwise use df itself
+
     id_source = source_df if source_df is not None else df_out
-    
-    # Check if 'id' column exists in the source data
-    if 'id' not in id_source.columns:
+
+    if "id" not in id_source.columns:
         return df_out
-    
-    # Ensure we have the same number of rows
+
     if len(id_source) != len(df_out):
         return df_out
-    
-    # Create clickable links using markdown syntax that opens in new tab
-    # Note: Streamlit doesn't support target="_blank" directly, but we can use HTML
-    links = []
+
+    urls: list[str] = []
     for idx in df_out.index:
         try:
-            entry_id = id_source.loc[idx, 'id']
+            entry_id = id_source.loc[idx, "id"]
             if pd.notna(entry_id) and str(entry_id).strip():
-                # Use HTML link that opens in new tab
-                link = f'<a href="https://vogelring.com/entries/{entry_id}" target="_blank">🔗 Link</a>'
-                links.append(link)
+                urls.append(f"https://vogelring.com/entries/{entry_id}")
             else:
-                links.append("")
+                urls.append("")
         except (KeyError, IndexError):
-            links.append("")
-    
-    # Add the link column as the rightmost column
-    df_out['Link'] = links
-    
+            urls.append("")
+
+    df_out["Eintrag"] = urls
+
     return df_out
 
 
@@ -115,18 +112,15 @@ def prepare_dataframe_for_display(
     fmt: str = DATE_DISPLAY_FORMAT,
 ) -> pd.DataFrame:
     """Prepare dataframe for display by formatting dates and adding vogelring link column.
-    
+
     This is a convenience function that combines date formatting and link column addition.
     """
     # First format dates
     df_out = format_date_columns_for_display(
-        df, 
-        date_columns=date_columns, 
-        include_display_names=include_display_names, 
-        fmt=fmt
+        df, date_columns=date_columns, include_display_names=include_display_names, fmt=fmt
     )
-    
+
     # Then add link column
     df_out = add_vogelring_link_column(df_out, source_df)
-    
+
     return df_out
