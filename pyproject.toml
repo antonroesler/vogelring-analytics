@@ -1,0 +1,10 @@
+[project]
+name = "vogelring-analytics"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["streamlit>=1.48.1", "pandas>=2.2.2", "altair>=5.3.0"]
+
+[tool.ruff]
+line-length = 120
