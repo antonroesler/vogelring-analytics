@@ -8,23 +8,16 @@ from views.data_sets import render_data_sets
 st.set_page_config(page_title="Vogelring Analytics", layout="wide")
 
 
-def _sidebar() -> str:
-    st.sidebar.title("Vogelring Analytics")
-    view = st.sidebar.radio(
-        "Ansicht",
-        options=["Daten Ansichten", "Datensätze"],
-        format_func=lambda x: x,
-        horizontal=False,
-    )
-    return view
-
-
 def main() -> None:
-    view = _sidebar()
-    if view == "Daten Ansichten":
-        render_data_view()
-    elif view == "Datensätze":
-        render_data_sets()
+    # App title in the main content area (sidebar keeps navigation on top)
+    st.title("Vogelring Analytics")
+
+    # Use Streamlit's native navigation instead of radio buttons
+    data_view_page = st.Page(render_data_view, title="Daten Ansichten", icon="📊")
+    data_sets_page = st.Page(render_data_sets, title="Datensätze", icon="🗂️")
+
+    pg = st.navigation([data_view_page, data_sets_page])
+    pg.run()
 
 
 if __name__ == "__main__":
