@@ -238,3 +238,18 @@ def render_map_usecase() -> None:
                 )
             with b:
                 st.write(name)
+
+
+def _two_month_bin(month: int) -> str:
+    pairs = [
+        (1, "Jan–Feb"),
+        (3, "Mär–Apr"),
+        (5, "Mai–Jun"),
+        (7, "Jul–Aug"),
+        (9, "Sep–Okt"),
+        (11, "Nov–Dez"),
+    ]
+    for start, label in pairs:
+        if start <= month <= start + 1:
+            return label
+    return "?"
