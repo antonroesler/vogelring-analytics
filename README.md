@@ -2,10 +2,9 @@
 
 Eine Streamlit-App zur Analyse von Vogelring-Beobachtungen auf Basis der Datei `sightings.csv`.
 
-### Architektur: Views, Datensätze, Use Cases
+### Architektur: Datensätze und Use Cases
 
-- **Views (Daten-Ansichten)**: vordefinierte Konfigurationen aus Spaltenauswahl und Filtern. Persistiert als JSON in `app/storage/*.json`. UI unter `app/views/data_view.py`.
-- **Datensätze (Datasets)**: Ergebnis einer View inkl. Zeilen-Selektion (Spalte `included`). Persistiert als Meta-JSON + CSV in `app/storage/datasets/`. UI unter `app/views/data_sets.py`. Gemeinsame Helfer in `app/util/datasets.py`.
+- **Datensätze (Datasets)**: enthalten Spaltenauswahl, Filter und eine Zeilen-Selektion (Ausschlüsse). Sie referenzieren immer die aktuelle `sightings.csv` und kopieren keine Daten. Persistiert als JSON-Config in `app/storage/datasets/*.json` mit Feldern `{ name, description, columns, filters, excluded_ids, id_field }`. UI unter `app/views/data_sets.py`. Gemeinsame Helfer in `app/util/datasets.py`.
 - **Use Cases (Analyse-Seiten)**: eigenständige Seiten im Sidebar, die auf einem ausgewählten Datensatz arbeiten und spezifische Metriken/Charts/Maps rendern. Jede Seite kapselt UI+Logik in einer `render_*`-Funktion und nutzt gemeinsame Utilities (Datasets, Mapping, Dates).
 
 ### Voraussetzungen
@@ -29,9 +28,9 @@ uv run streamlit run app/app.py
 
 ### Funktionen
 
-- Daten-Tabelle mit Spaltenauswahl und Filtern (Art, Geschlecht, Status, Jahr, Ort, Ring-Substring)
-- Filter-Konfigurationen als Profil speichern/laden/löschen (persistiert in `.vogelring_state/filters.json`)
-- Eigene Diagramme (Balkendiagramm, Aggregation Anzahl)
+- Datensatz-Builder mit Spaltenauswahl, Filter-Builder und Zeilen-Auswahl (ein-/ausschließen)
+- Datensätze laden, bearbeiten, als Kopie speichern, löschen
+- Keine Datenkopie: Datensätze spiegeln stets die aktuelle `sightings.csv` wider
 - Ort & Saison-Analyse:
   - Kohorte definieren per Jahr, Art, Ort, Zeitraum und optionalem Status
   - Verteilung der Beobachtungen über Orte im Jahr
