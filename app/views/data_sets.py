@@ -241,37 +241,40 @@ def _columns_selector_ui(df: pd.DataFrame, col_count: int = 4) -> list[str]:
     pairs = [(col, mapping.get(col, col)) for col in available_internal]
     pairs.sort(key=lambda x: x[1])
 
+    # Initialize ds_columns if not set
+    if "ds_columns" not in st.session_state:
+        st.session_state.ds_columns = DEFAULT_COLUMNS.copy()
+
     with st.expander("Spalten auswählen", expanded=True):
         top_cols = st.columns([3, 1])
         with top_cols[0]:
             query = st.text_input("Spalten filtern", placeholder="z. B. Datum, Ort", key="ds_col_search_query")
         with top_cols[1]:
-            st.checkbox(
-                "Alle auswählen", value=st.session_state.get("ds_col_select_all", False), key="ds_col_select_all"
-            )
-
-        first_render = not st.session_state.get("ds_cols_initialized", False)
-        preferred = st.session_state.get("ds_columns") or DEFAULT_COLUMNS
-        if first_render:
-            st.session_state["ds_cols_initialized"] = True
+            if st.checkbox("Alle auswählen", key="ds_col_select_all"):
+                if st.session_state.ds_col_select_all:
+                    st.session_state.ds_columns = available_internal.copy()
+                else:
+                    st.session_state.ds_columns = []
 
         pairs_to_render = [p for p in pairs if (query or "").strip().lower() in p[1].lower()] if query else pairs
         grid = st.columns(col_count)
+
+        current_selection = st.session_state.ds_columns
+
         for idx, (internal, label) in enumerate(pairs_to_render):
             key = f"ds_colchk_{internal}"
             with grid[idx % col_count]:
-                if first_render:
-                    st.checkbox(label, value=(internal in preferred), key=key)
-                else:
-                    st.checkbox(label, key=key)
+                # Checkbox value is based on current ds_columns list
+                is_checked = st.checkbox(label, value=(internal in current_selection), key=key)
 
-        selected_internal: list[str] = []
-        for internal, _label in pairs:
-            if st.session_state.get(f"ds_colchk_{internal}", False):
-                selected_internal.append(internal)
+                # Update ds_columns based on checkbox state
+                if is_checked and internal not in st.session_state.ds_columns:
+                    st.session_state.ds_columns.append(internal)
+                elif not is_checked and internal in st.session_state.ds_columns:
+                    st.session_state.ds_columns.remove(internal)
 
-        st.caption(f"Ausgewählt: {len(selected_internal)}/{len(pairs)} Spalten")
-        return selected_internal
+        st.caption(f"Ausgewählt: {len(st.session_state.ds_columns)}/{len(pairs)} Spalten")
+        return st.session_state.ds_columns
 
 
 def _ensure_builder_state() -> None:
@@ -289,7 +292,6 @@ def _load_into_builder(name: str) -> None:
     st.session_state.ds_filters = cfg.get("filters", [])
     st.session_state.ds_columns = cfg.get("columns", [])
     st.session_state.ds_excluded_ids = set(str(x) for x in cfg.get("excluded_ids", []))
-    st.session_state["ds_cols_initialized"] = False
 
 
 def render_data_sets() -> None:
@@ -313,7 +315,8 @@ def render_data_sets() -> None:
                 st.rerun()
         else:
             st.session_state.pop("ds_selected_existing", None)
-            st.session_state["ds_cols_initialized"] = False
+            # Reset to default columns when creating new dataset
+            st.session_state.ds_columns = DEFAULT_COLUMNS.copy()
 
         st.markdown("---")
         st.caption("Kopie erstellen")
