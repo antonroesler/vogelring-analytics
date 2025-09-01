@@ -1,36 +1,38 @@
 from __future__ import annotations
 
-from datetime import datetime
-import json
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import streamlit as st
 
-from data import load_data
-from util.col_mapping import mapping
-from util.storage import STORAGE_DIR, load_views, load_view
-from util.dates import format_date_columns_for_display, prepare_dataframe_for_display
+from data import load_data, unique_nonempty
+from util.col_mapping import mapping, reverse_mapping
+from util.dates import add_vogelring_link_column
+from util.datasets import (
+    list_dataset_names,
+    load_dataset_config,
+    save_dataset_config,
+    delete_dataset,
+    duplicate_dataset,
+)
 
 
-DATASETS_DIR = STORAGE_DIR / "datasets"
-DATASETS_DIR.mkdir(parents=True, exist_ok=True)
+DEFAULT_COLUMNS: list[str] = ["ring", "reading", "species", "place", "date", "status"]
 
 
-def _safe_filename(name: str) -> str:
-    safe = "".join(c for c in name if c.isalnum() or c in ("-", "_", " ")).strip()
-    return safe.replace(" ", "_")
+def _internal_columns(df: pd.DataFrame) -> list[str]:
+    return [c for c in df.columns if c in mapping]
 
 
-def _dataset_paths(name: str) -> tuple[Path, Path]:
-    base = DATASETS_DIR / _safe_filename(name)
-    return base.with_suffix(".json"), base.with_suffix(".csv")
+def _to_display_columns(columns: list[str]) -> list[str]:
+    return [mapping.get(c, c) for c in columns]
 
 
-def _apply_filters(df: pd.DataFrame, filters: list[dict[str, Any]]) -> pd.DataFrame:
+def _apply_filters(df: pd.DataFrame, filters: list[dict[str, Any]] | None) -> pd.DataFrame:
+    if not filters:
+        return df
     result = df.copy()
-    for f in filters or []:
+    for f in filters:
         ftype = f.get("type")
         col = f.get("column")
         if col not in result.columns:
@@ -71,267 +73,372 @@ def _apply_filters(df: pd.DataFrame, filters: list[dict[str, Any]]) -> pd.DataFr
     return result
 
 
-def _list_datasets() -> list[str]:
-    return sorted([p.stem for p in DATASETS_DIR.glob("*.json")])
+def _filter_builder_ui(df: pd.DataFrame) -> list[dict[str, Any]]:
+    st.session_state.setdefault("ds_filters", [])
+
+    st.write("Aktive Filter:")
+    if len(st.session_state.ds_filters) == 0:
+        st.caption("Keine Filter hinzugefügt.")
+    else:
+        for idx, f in enumerate(st.session_state.ds_filters):
+            col_label = mapping.get(f.get("column", ""), f.get("column", ""))
+            type_label = {
+                "equals": "Gleich",
+                "multi": "Mehrfach",
+                "contains": "Enthält",
+                "date_range": "Datum-Bereich",
+                "number_range": "Zahlen-Bereich",
+            }.get(f.get("type", ""), f.get("type", ""))
+            desc = type_label
+            if f.get("type") == "multi":
+                desc = f"{desc}: {', '.join(f.get('values', []))}"
+            elif f.get("type") == "equals":
+                desc = f"{desc}: {f.get('value', '')}"
+            elif f.get("type") == "contains":
+                desc = f"{desc}: {f.get('value', '')}"
+            elif f.get("type") == "date_range":
+                desc = f"{desc}: {f.get('start', '')} – {f.get('end', '')}"
+            elif f.get("type") == "number_range":
+                desc = f"{desc}: {f.get('min', '')} – {f.get('max', '')}"
+            cols = st.columns([3, 4, 1])
+            with cols[0]:
+                st.write(col_label)
+            with cols[1]:
+                st.write(desc)
+            with cols[2]:
+                if st.button("Entfernen", key=f"remove_ds_filter_{idx}"):
+                    st.session_state.ds_filters.pop(idx)
+                    st.rerun()
+        if st.button("Alle Filter entfernen", key="clear_all_ds_filters"):
+            st.session_state.ds_filters = []
+            st.rerun()
+
+    with st.expander("Filter hinzufügen", expanded=False):
+        available_columns = _internal_columns(df)
+        column_display = st.selectbox(
+            "Spalte",
+            options=_to_display_columns(available_columns),
+            index=0,
+            key="ds_new_filter_column_display",
+        )
+        column_internal = reverse_mapping[column_display]
+
+        is_date = column_internal in {"date", "ringing_date"}
+        is_numeric = column_internal in {
+            "lat",
+            "lon",
+            "ringing_lat",
+            "ringing_lon",
+            "breed_size",
+            "family_size",
+            "small_group_size",
+            "large_group_size",
+        }
+        is_boolean = column_internal in {"melded", "is_exact_location"}
+        is_categorical = column_internal in {
+            "species",
+            "place",
+            "area",
+            "sex",
+            "age",
+            "status",
+            "habitat",
+            "field_fruit",
+            "melder",
+            "ring",
+            "partner",
+            "ringing_ring_scheme",
+            "ringing_species",
+            "ringing_place",
+            "ringing_ringer",
+            "ringing_sex",
+            "ringing_age",
+            "ringing_status",
+        }
+
+        if is_date:
+            col_a, col_b = st.columns(2)
+            with col_a:
+                start = st.date_input("Von", value=None, key="ds_new_filter_date_start")
+            with col_b:
+                end = st.date_input("Bis", value=None, key="ds_new_filter_date_end")
+            if st.button("Filter hinzufügen", key="ds_add_filter_date"):
+                st.session_state.ds_filters.append(
+                    {
+                        "type": "date_range",
+                        "column": column_internal,
+                        "start": str(start) if start else None,
+                        "end": str(end) if end else None,
+                    }
+                )
+                st.rerun()
+        elif is_numeric:
+            mode = st.radio("Filtertyp", options=["Bereich", "Gleich"], horizontal=True, key="ds_num_mode")
+            if mode == "Bereich":
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    min_v = st.text_input("Min", key="ds_new_filter_min")
+                with col_b:
+                    max_v = st.text_input("Max", key="ds_new_filter_max")
+                if st.button("Filter hinzufügen", key="ds_add_filter_number"):
+                    st.session_state.ds_filters.append(
+                        {
+                            "type": "number_range",
+                            "column": column_internal,
+                            "min": min_v,
+                            "max": max_v,
+                        }
+                    )
+                    st.rerun()
+            else:
+                val = st.text_input("Wert", key="ds_new_filter_number_equals")
+                if st.button("Filter hinzufügen", key="ds_add_filter_number_equals"):
+                    st.session_state.ds_filters.append({"type": "equals", "column": column_internal, "value": val})
+                    st.rerun()
+        elif is_boolean:
+            val = st.selectbox("Wert", options=["Ja", "Nein"], index=0, key="ds_bool_equals_val")
+            if st.button("Filter hinzufügen", key="ds_add_filter_bool_equals"):
+                st.session_state.ds_filters.append(
+                    {"type": "equals", "column": column_internal, "value": (val == "Ja")}
+                )
+                st.rerun()
+        elif is_categorical:
+            mode = st.radio("Filtertyp", options=["Gleich", "Mehrfach", "Enthält"], horizontal=True, key="ds_cat_mode")
+            values = unique_nonempty(df, column_internal)
+            if mode == "Gleich":
+                value = st.selectbox("Wert", options=values, key="ds_new_filter_equals_val")
+                if st.button("Filter hinzufügen", key="ds_add_filter_equals"):
+                    st.session_state.ds_filters.append({"type": "equals", "column": column_internal, "value": value})
+                    st.rerun()
+            elif mode == "Mehrfach":
+                chosen = st.multiselect("Werte", options=values, key="ds_new_filter_multi")
+                if st.button("Filter hinzufügen", key="ds_add_filter_multi"):
+                    st.session_state.ds_filters.append({"type": "multi", "column": column_internal, "values": chosen})
+                    st.rerun()
+            else:
+                text = st.text_input("Enthält", key="ds_new_filter_contains")
+                if st.button("Filter hinzufügen", key="ds_add_filter_contains"):
+                    st.session_state.ds_filters.append({"type": "contains", "column": column_internal, "value": text})
+                    st.rerun()
+        else:
+            mode = st.radio("Filtertyp", options=["Gleich", "Enthält"], horizontal=True, key="ds_text_mode")
+            if mode == "Gleich":
+                val = st.text_input("Wert", key="ds_new_filter_text_equals")
+                if st.button("Filter hinzufügen", key="ds_add_filter_text_equals"):
+                    st.session_state.ds_filters.append({"type": "equals", "column": column_internal, "value": val})
+                    st.rerun()
+            else:
+                text = st.text_input("Enthält", key="ds_new_filter_contains_generic")
+                if st.button("Filter hinzufügen", key="ds_add_filter_contains_generic"):
+                    st.session_state.ds_filters.append({"type": "contains", "column": column_internal, "value": text})
+                    st.rerun()
+
+    return st.session_state.ds_filters
 
 
-def _load_dataset(name: str) -> tuple[dict[str, Any], pd.DataFrame] | tuple[None, None]:
-    meta_path, data_path = _dataset_paths(name)
-    if not meta_path.exists() or not data_path.exists():
-        return None, None
-    with open(meta_path, "r", encoding="utf-8") as f:
-        meta = json.load(f)
-    # Backward/compat: if base_view was stringified, try to parse
-    if isinstance(meta.get("base_view"), str):
-        try:
-            meta["base_view"] = json.loads(meta["base_view"])  # type: ignore[arg-type]
-        except Exception:
-            meta["base_view"] = {}
-    df = pd.read_csv(data_path, sep=";", dtype=str, keep_default_na=True, na_values=["", "NA", "NaN"])
-    return meta, df
+def _columns_selector_ui(df: pd.DataFrame, col_count: int = 4) -> list[str]:
+    available_internal = _internal_columns(df)
+    pairs = [(col, mapping.get(col, col)) for col in available_internal]
+    pairs.sort(key=lambda x: x[1])
+
+    with st.expander("Spalten auswählen", expanded=True):
+        top_cols = st.columns([3, 1])
+        with top_cols[0]:
+            query = st.text_input("Spalten filtern", placeholder="z. B. Datum, Ort", key="ds_col_search_query")
+        with top_cols[1]:
+            st.checkbox(
+                "Alle auswählen", value=st.session_state.get("ds_col_select_all", False), key="ds_col_select_all"
+            )
+
+        first_render = not st.session_state.get("ds_cols_initialized", False)
+        preferred = st.session_state.get("ds_columns") or DEFAULT_COLUMNS
+        if first_render:
+            st.session_state["ds_cols_initialized"] = True
+
+        pairs_to_render = [p for p in pairs if (query or "").strip().lower() in p[1].lower()] if query else pairs
+        grid = st.columns(col_count)
+        for idx, (internal, label) in enumerate(pairs_to_render):
+            key = f"ds_colchk_{internal}"
+            with grid[idx % col_count]:
+                if first_render:
+                    st.checkbox(label, value=(internal in preferred), key=key)
+                else:
+                    st.checkbox(label, key=key)
+
+        selected_internal: list[str] = []
+        for internal, _label in pairs:
+            if st.session_state.get(f"ds_colchk_{internal}", False):
+                selected_internal.append(internal)
+
+        st.caption(f"Ausgewählt: {len(selected_internal)}/{len(pairs)} Spalten")
+        return selected_internal
 
 
-def _save_dataset(
-    name: str, description: str, base_view: dict[str, Any], df_full: pd.DataFrame, included_mask: pd.Series
-) -> None:
-    created_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
-    meta = {
-        "name": name,
-        "description": description,
-        "created_at": created_at,
-        "base_view": {
-            "name": base_view.get("name"),
-            "columns": base_view.get("columns", []),
-            "filters": base_view.get("filters", []),
-        },
-        "row_count": int(len(df_full)),
-        "included_count": int(included_mask.sum()),
-    }
+def _ensure_builder_state() -> None:
+    st.session_state.setdefault("ds_name", "")
+    st.session_state.setdefault("ds_description", "")
+    st.session_state.setdefault("ds_filters", [])
+    st.session_state.setdefault("ds_columns", [])
+    st.session_state.setdefault("ds_excluded_ids", set())
 
-    meta_path, data_path = _dataset_paths(name)
-    # Save metadata as JSON
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
 
-    # Save full data with include flag; keep internal column names
-    to_save = df_full.copy()
-    to_save.insert(0, "included", included_mask.astype(bool).astype(int))
-    to_save.to_csv(data_path, sep=";", index=False)
+def _load_into_builder(name: str) -> None:
+    cfg = load_dataset_config(name) or {}
+    st.session_state.ds_name = cfg.get("name", name)
+    st.session_state.ds_description = cfg.get("description", "")
+    st.session_state.ds_filters = cfg.get("filters", [])
+    st.session_state.ds_columns = cfg.get("columns", [])
+    st.session_state.ds_excluded_ids = set(str(x) for x in cfg.get("excluded_ids", []))
+    st.session_state["ds_cols_initialized"] = False
 
 
 def render_data_sets() -> None:
     st.header("Datensätze")
 
     df_all = load_data()
+    _ensure_builder_state()
 
-    # Existing datasets
-    st.subheader("Gespeicherte Datensätze")
-    ds_names = _list_datasets()
-    if not ds_names:
-        st.caption("Keine Datensätze gespeichert.")
-    else:
-        cols = st.columns([3, 1])
-        with cols[0]:
-            chosen_ds = st.selectbox(
-                "Datensatz laden", options=["— Bitte wählen —"] + ds_names, index=0, key="ds_select"
-            )
-        with cols[1]:
-            if st.button("Laden") and chosen_ds and chosen_ds != "— Bitte wählen —":
-                meta, df_ds = _load_dataset(chosen_ds)
-                if meta is not None and df_ds is not None:
-                    st.session_state.ds_loaded_name = chosen_ds
-                    st.session_state.ds_loaded_meta = meta
-                    st.session_state.ds_loaded_df = df_ds
+    with st.sidebar:
+        st.subheader("Datensatz verwalten")
+        names = list_dataset_names()
+        selected = st.selectbox("Laden", options=["— Neu —"] + names, index=0, key="ds_select_existing")
+        if selected != "— Neu —":
+            if st.button("Auswählen", key="ds_load_btn"):
+                _load_into_builder(selected)
+                st.session_state.ds_selected_existing = selected
+                st.rerun()
+            if st.button("Löschen", key="ds_delete_btn"):
+                delete_dataset(selected)
+                st.success("Datensatz gelöscht.")
+                st.rerun()
+        else:
+            st.session_state.pop("ds_selected_existing", None)
+            st.session_state["ds_cols_initialized"] = False
+
+        st.markdown("---")
+        st.caption("Kopie erstellen")
+        new_name = st.text_input("Kopiername", key="ds_duplicate_name")
+        if st.button("Als Kopie speichern", key="ds_duplicate_btn"):
+            if not new_name:
+                st.error("Bitte einen Namen für die Kopie angeben.")
+            else:
+                source_name = st.session_state.get("ds_selected_existing", st.session_state.ds_name)
+                if not source_name:
+                    st.error("Kein Quell-Datensatz ausgewählt.")
+                else:
+                    duplicate_dataset(source_name, new_name, new_description=st.session_state.ds_description)
+                    st.success("Kopie gespeichert.")
                     st.rerun()
 
-    # Full-width editor for a loaded dataset
-    if st.session_state.get("ds_loaded_name"):
-        meta = st.session_state.get("ds_loaded_meta", {})
-        df_ds = st.session_state.get("ds_loaded_df", pd.DataFrame())
-        st.markdown("---")
-        st.subheader(f"Datensatz: {meta.get('name', st.session_state.ds_loaded_name)}")
-        st.caption(meta.get("description", ""))
-        st.caption(f"Erstellt: {meta.get('created_at', '')}")
+    st.subheader("1) Metadaten")
+    st.session_state.ds_name = st.text_input("Name", value=st.session_state.ds_name, key="ds_name_input")
+    st.session_state.ds_description = st.text_area(
+        "Beschreibung", value=st.session_state.ds_description, height=60, key="ds_desc_input"
+    )
 
-        show_hidden = st.checkbox("Auch versteckte Zeilen anzeigen", value=False, key="ds_show_hidden")
+    st.subheader("2) Spalten")
+    selected_columns = _columns_selector_ui(df_all)
+    st.session_state.ds_columns = selected_columns
 
-        df_work = df_ds.copy().reset_index(drop=True)
-        included_series = (
-            pd.Series(df_work.get("included", 1))
-            .astype(str)
-            .map(lambda x: x in {"1", "True", "true", "TRUE"})
-            .fillna(True)
-        )
+    st.subheader("3) Filter")
+    filters = _filter_builder_ui(df_all)
 
-        base_view_cols = meta.get("base_view", {}).get("columns", [])
-        view_cols_existing = [c for c in base_view_cols if c in df_work.columns]
-        if len(view_cols_existing) == 0:
-            view_cols_existing = [c for c in df_work.columns if c in mapping]
+    working = _apply_filters(df_all, filters).reset_index(drop=True)
+    id_field = "id"
+    if id_field not in working.columns:
+        st.warning("Spalte 'id' fehlt. Zeilenauswahl wird deaktiviert.")
+    ids_series = working.get(id_field, pd.Series([""] * len(working)))
+    excluded_ids: set[str] = set(st.session_state.ds_excluded_ids)
+    included_flags = [str(i) not in excluded_ids for i in ids_series]
 
-        # Only included rows by default
-        subset_mask = included_series if not show_hidden else pd.Series([True] * len(df_work))
-        subset_idx = subset_mask[subset_mask].index
-        disp = df_work.loc[subset_idx, view_cols_existing].rename(columns=mapping)
-        disp = prepare_dataframe_for_display(disp, source_df=df_work.loc[subset_idx])
-        disp.insert(0, "Aufnehmen", included_series.loc[subset_idx].tolist())
+    st.subheader("4) Zeilen auswählen")
+    view_columns = [c for c in (st.session_state.ds_columns or _internal_columns(working)) if c in working.columns]
+    disp = working[view_columns].rename(columns=mapping)
+    # Keep datetime dtype for proper sorting; only add link column
+    disp = add_vogelring_link_column(disp, working)
+    disp.insert(0, "Aufnehmen", included_flags)
 
-        link_cfg: dict[str, Any] = {}
-        try:
-            LinkColumn = getattr(st.column_config, "LinkColumn", None)
-            if LinkColumn is not None:
-                link_cfg = {
-                    "Eintrag": LinkColumn("Eintrag", help="Öffnen in neuem Tab", width="small", display_text="Öffnen"),
-                }
-            else:
-                URLColumn = getattr(st.column_config, "URLColumn", None)
-                if URLColumn is not None:
-                    link_cfg = {
-                        "Eintrag": URLColumn("Eintrag", help="Öffnen in neuem Tab", width="small"),
-                    }
-        except Exception:
-            link_cfg = {}
-
-        edited = st.data_editor(
-            disp,
-            use_container_width=True,
-            hide_index=True,
-            num_rows="fixed",
-            key="loaded_dataset_editor",
-            column_config=link_cfg or None,
-        )
-        # Push edited flags back to dataset df
-        updated_flags = pd.Series(edited["Aufnehmen"].astype(bool).tolist(), index=subset_idx)
-        df_work.loc[subset_idx, "included"] = updated_flags.astype(int).values
-
-        col_a, col_b, _ = st.columns([2, 2, 6])
-        with col_a:
-            if st.button("Änderungen speichern"):
-                st.session_state.ds_loaded_df = df_work
-                base_view = meta.get("base_view", {})
-                # Persist with all original columns preserved
-                _save_dataset(
-                    meta.get("name", st.session_state.ds_loaded_name),
-                    meta.get("description", ""),
-                    base_view,
-                    df_work.drop(columns=[c for c in df_work.columns if c not in df_all.columns], errors="ignore"),
-                    pd.Series(df_work["included"]).astype(bool),
-                )
-                st.success("Datensatz aktualisiert.")
-                st.rerun()
-        with col_b:
-            if st.button("Schließen"):
-                st.session_state.pop("ds_loaded_name", None)
-                st.session_state.pop("ds_loaded_meta", None)
-                st.session_state.pop("ds_loaded_df", None)
-                st.rerun()
-
-    st.markdown("---")
-    st.subheader("Neuen Datensatz erstellen")
-
-    views = load_views()
-    view_names = [v.get("name", "") for v in views]
-    if not view_names:
-        st.info("Bitte zuerst unter 'Daten Ansichten' eine Ansicht speichern.")
-        return
-
-    base_view_name = st.selectbox("Ansicht auswählen", options=view_names, index=0, key="dataset_base_view")
-    base_view = load_view(base_view_name) or {}
-
-    # Apply view to data
-    filtered_df = _apply_filters(df_all, base_view.get("filters", []))
-    view_columns = [c for c in base_view.get("columns", []) if c in filtered_df.columns]
-    if len(view_columns) == 0:
-        view_columns = [c for c in filtered_df.columns if c in mapping]
-
-    # Build editable grid with checkbox for inclusion
-    st.caption("Zeilen auswählen (ein-/ausschließen)")
-    working = filtered_df.copy().reset_index(drop=True)
-    # Reset inclusion state when view changes or length differs
-    prev_view = st.session_state.get("dataset_prev_view_name")
-    if prev_view != base_view_name:
-        st.session_state.included_state = [True] * len(working)
-        st.session_state.dataset_prev_view_name = base_view_name
-    elif "included_state" not in st.session_state or len(st.session_state.included_state) != len(working):
-        st.session_state.included_state = [True] * len(working)
-    # Use data_editor with a boolean column
-    display_df = working[view_columns].rename(columns=mapping)
-    display_df = prepare_dataframe_for_display(display_df, source_df=working)
-    display_df.insert(0, "Aufnehmen", st.session_state.included_state)
-    link_cfg2: dict[str, Any] = {}
+    link_cfg: dict[str, Any] = {}
     try:
         LinkColumn = getattr(st.column_config, "LinkColumn", None)
         if LinkColumn is not None:
-            link_cfg2 = {
+            link_cfg = {
                 "Eintrag": LinkColumn("Eintrag", help="Öffnen in neuem Tab", width="small", display_text="Öffnen"),
             }
         else:
             URLColumn = getattr(st.column_config, "URLColumn", None)
             if URLColumn is not None:
-                link_cfg2 = {
+                link_cfg = {
                     "Eintrag": URLColumn("Eintrag", help="Öffnen in neuem Tab", width="small"),
                 }
     except Exception:
-        link_cfg2 = {}
+        link_cfg = {}
+
+    # Add datetime column config for display formatting while keeping dtype for sorting
+    try:
+        DatetimeColumn = getattr(st.column_config, "DatetimeColumn", None)
+        if DatetimeColumn is not None:
+            date_cfg: dict[str, Any] = {}
+            if mapping.get("date") in disp.columns:
+                date_cfg[mapping["date"]] = DatetimeColumn(mapping["date"], format="DD.MM.YYYY")
+            if mapping.get("ringing_date") in disp.columns:
+                date_cfg[mapping["ringing_date"]] = DatetimeColumn(mapping["ringing_date"], format="DD.MM.YYYY")
+            link_cfg = {**link_cfg, **date_cfg}
+    except Exception:
+        pass
 
     edited = st.data_editor(
-        display_df,
+        disp,
         use_container_width=True,
         hide_index=True,
         num_rows="fixed",
-        key="dataset_editor",
-        column_config=link_cfg2 or None,
+        key="ds_editor_current",
+        column_config=link_cfg or None,
     )
-    # Persist updated included mask in session state
-    st.session_state.included_state = edited["Aufnehmen"].astype(bool).tolist()
-    included_mask = pd.Series(st.session_state.included_state)
 
-    left, mid, right = st.columns([2, 2, 6])
-    with left:
-        if st.button("Alle auswählen"):
-            st.session_state.included_state = [True] * len(working)
-            st.rerun()
-    with mid:
-        if st.button("Alle abwählen"):
-            st.session_state.included_state = [False] * len(working)
-            st.rerun()
+    if id_field in working.columns:
+        updated_flags = edited["Aufnehmen"].astype(bool).tolist()
+        new_excluded: set[str] = set()
+        for flag, row_id in zip(updated_flags, ids_series.tolist()):
+            if not flag:
+                new_excluded.add(str(row_id))
+        st.session_state.ds_excluded_ids = new_excluded
 
-    st.caption(f"Ausgewählt: {int(included_mask.sum())} von {len(working)} Zeilen")
+    st.caption(f"Ausgewählt: {int(edited['Aufnehmen'].astype(bool).sum())} von {len(working)} Zeilen")
 
-    st.markdown("#### Metadaten")
-    name = st.text_input("Name des Datensatzes")
-    description = st.text_area("Beschreibung", height=60)
-
-    col_a, col_b = st.columns(2)
+    col_a, col_b, _ = st.columns([2, 2, 6])
     with col_a:
-        if st.button("Vorschau anzeigen"):
-            preview_df = working[included_mask.values]
-            preview_df = preview_df[view_columns].rename(columns=mapping)
-            preview_df = prepare_dataframe_for_display(preview_df, source_df=working[included_mask.values])
-            link_cfg3: dict[str, Any] = {}
-            try:
-                LinkColumn = getattr(st.column_config, "LinkColumn", None)
-                if LinkColumn is not None:
-                    link_cfg3 = {
-                        "Eintrag": LinkColumn(
-                            "Eintrag", help="Öffnen in neuem Tab", width="small", display_text="Öffnen"
-                        ),
-                    }
-                else:
-                    URLColumn = getattr(st.column_config, "URLColumn", None)
-                    if URLColumn is not None:
-                        link_cfg3 = {
-                            "Eintrag": URLColumn("Eintrag", help="Öffnen in neuem Tab", width="small"),
-                        }
-            except Exception:
-                link_cfg3 = {}
-            st.dataframe(preview_df, use_container_width=True, hide_index=True, column_config=link_cfg3 or None)
+        if st.button("Alle auswählen"):
+            st.session_state.ds_excluded_ids = set()
+            st.rerun()
     with col_b:
+        if st.button("Alle abwählen") and id_field in working.columns:
+            st.session_state.ds_excluded_ids = set(str(x) for x in ids_series.tolist())
+            st.rerun()
+
+    st.subheader("Speichern")
+    left, right = st.columns(2)
+    with left:
+        if st.button("Vorschau anzeigen"):
+            prev_mask = edited["Aufnehmen"].astype(bool).values
+            prev_df = working.loc[prev_mask, view_columns].rename(columns=mapping)
+            prev_df = add_vogelring_link_column(prev_df, working.loc[prev_mask])
+            # Use same column config to format date columns
+            st.dataframe(prev_df, use_container_width=True, hide_index=True, column_config=link_cfg or None)
+    with right:
         if st.button("Datensatz speichern"):
-            if not name:
+            if not st.session_state.ds_name:
                 st.error("Bitte einen Namen angeben.")
             else:
-                _save_dataset(name, description, base_view, working, included_mask)
+                cfg = {
+                    "name": st.session_state.ds_name,
+                    "description": st.session_state.ds_description,
+                    "columns": st.session_state.ds_columns,
+                    "filters": st.session_state.ds_filters,
+                    "excluded_ids": list(st.session_state.ds_excluded_ids),
+                    "id_field": "id",
+                }
+                save_dataset_config(cfg)
                 st.success("Datensatz gespeichert.")
-                # reset state for next dataset
-                st.session_state.included_state = [True] * len(working)
+                st.session_state.ds_selected_existing = st.session_state.ds_name
                 st.rerun()
