@@ -420,28 +420,37 @@ def render_data_sets() -> None:
             st.rerun()
 
     st.subheader("Speichern")
-    left, right = st.columns(2)
-    with left:
-        if st.button("Vorschau anzeigen"):
-            prev_mask = edited["Aufnehmen"].astype(bool).values
-            prev_df = working.loc[prev_mask, view_columns].rename(columns=mapping)
-            prev_df = add_vogelring_link_column(prev_df, working.loc[prev_mask])
-            # Use same column config to format date columns
-            st.dataframe(prev_df, use_container_width=True, hide_index=True, column_config=link_cfg or None)
-    with right:
-        if st.button("Datensatz speichern"):
-            if not st.session_state.ds_name:
-                st.error("Bitte einen Namen angeben.")
-            else:
-                cfg = {
-                    "name": st.session_state.ds_name,
-                    "description": st.session_state.ds_description,
-                    "columns": st.session_state.ds_columns,
-                    "filters": st.session_state.ds_filters,
-                    "excluded_ids": list(st.session_state.ds_excluded_ids),
-                    "id_field": "id",
-                }
-                save_dataset_config(cfg)
-                st.success("Datensatz gespeichert.")
-                st.session_state.ds_selected_existing = st.session_state.ds_name
-                st.rerun()
+
+    # Button layout - side by side with proper spacing
+    col1, col2 = st.columns(2)
+    with col1:
+        show_preview = st.button("Vorschau anzeigen", use_container_width=True)
+    with col2:
+        save_dataset = st.button("Datensatz speichern", type="primary", use_container_width=True)
+
+    # Preview display - uses full width when shown
+    if show_preview:
+        st.subheader("Vorschau")
+        prev_mask = edited["Aufnehmen"].astype(bool).values
+        prev_df = working.loc[prev_mask, view_columns].rename(columns=mapping)
+        prev_df = add_vogelring_link_column(prev_df, working.loc[prev_mask])
+        # Use same column config to format date columns
+        st.dataframe(prev_df, use_container_width=True, hide_index=True, column_config=link_cfg or None)
+
+    # Save functionality
+    if save_dataset:
+        if not st.session_state.ds_name:
+            st.error("Bitte einen Namen angeben.")
+        else:
+            cfg = {
+                "name": st.session_state.ds_name,
+                "description": st.session_state.ds_description,
+                "columns": st.session_state.ds_columns,
+                "filters": st.session_state.ds_filters,
+                "excluded_ids": list(st.session_state.ds_excluded_ids),
+                "id_field": "id",
+            }
+            save_dataset_config(cfg)
+            st.success("Datensatz gespeichert.")
+            st.session_state.ds_selected_existing = st.session_state.ds_name
+            st.rerun()
