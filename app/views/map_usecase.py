@@ -204,10 +204,7 @@ def render_map_usecase() -> None:
         get_fill_color="__color__",
         get_radius=radius,
         pickable=True,
-        stroked=True,
-        get_line_color=[255, 255, 255],
-        get_line_width=2,
-        lineWidthMinPixels=1,
+        stroked=False,
     )
 
     tooltip = {
