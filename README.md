@@ -47,6 +47,21 @@ uv run streamlit run app/app.py
   - Numerisch: Auswahl einer numerischen Spalte, kontinuierlicher Farbverlauf (Viridis-ähnlich) inkl. Bereichssteuerung und Legendenangaben.
 - Performant umgesetzt über Vektordatensatz und clientseitiges WebGL-Rendering; minimaler DataFrame-Kopiebedarf.
 
+### Use Case: Mauser-Analyse
+
+- Seite: `Mauser-Analyse` im Sidebar (`app/views/moult_usecase.py`).
+- Beantwortet die Frage: "Verbringen Ringvögel die an Ort X mausern den Rest des Jahres auch an Ort X, an einem anderen bekannten Ort, oder irgendwo anders (=keine Daten)?"
+- Workflow:
+  1. **Parameter definieren**: Jahr, Art, Mauserort (nach Häufigkeit sortiert)
+  2. **Mausernde Vögel definieren**: Zeitraum (Monate) oder Status-Filter
+  3. **Analyse**: Automatische Identifikation der mausernden Ringe und Verfolgung ihrer Bewegungen
+- Ergebnisse:
+  - Zusammenfassungstabelle mit Kategorisierung (am selben Ort, andere Orte, nur Mauserzeit)
+  - Interaktive Balkendiagramme (klickbar für Detailansicht)
+  - Zeitliche Verteilung der Beobachtungen
+  - Detailtabellen mit Vogelring-Links
+- Nutzt Session State für persistente Ergebnisse bei Chart-Interaktionen.
+
 ### Hinweise
 
 - Alle UI-Texte sind auf Deutsch.

@@ -6,6 +6,7 @@ import altair as alt
 
 from util.col_mapping import mapping
 from util.datasets import dataset_selector_ui, load_dataset
+from util.dates import prepare_dataframe_for_display
 from data import unique_nonempty
 
 
@@ -142,8 +143,12 @@ def _analyze_rest_of_year(
     return all_rest_year, different_places
 
 
-def _create_place_distribution_chart(df: pd.DataFrame) -> alt.Chart:
-    """Create a bar chart showing distribution of sightings by place."""
+def _create_place_distribution_chart(df: pd.DataFrame) -> tuple[alt.Chart, pd.DataFrame]:
+    """Create an interactive bar chart showing distribution of sightings by place.
+
+    Returns:
+        tuple: (chart, place_counts_df) - chart and the underlying data for selection
+    """
     place_counts = (
         df.groupby("place")
         .agg({"ring": "nunique", "id": "count"})
@@ -153,23 +158,37 @@ def _create_place_distribution_chart(df: pd.DataFrame) -> alt.Chart:
         .head(10)  # Top 10 places
     )
 
+    # Create a selection that chooses based on click
+    click = alt.selection_point(fields=["place"])
+
     chart = (
         alt.Chart(place_counts)
-        .mark_bar()
+        .mark_bar(cursor="pointer")
+        .add_params(click)
         .encode(
             x=alt.X("unique_rings:Q", title="Anzahl eindeutiger Ringe"),
             y=alt.Y("place:N", title="Ort", sort="-x"),
-            color=alt.Color("unique_rings:Q", scale=alt.Scale(scheme="viridis"), title="Ringe"),
+            color=alt.condition(
+                click,
+                alt.Color("unique_rings:Q", scale=alt.Scale(scheme="viridis"), title="Ringe"),
+                alt.value("lightgray"),
+            ),
+            stroke=alt.condition(click, alt.value("black"), alt.value("transparent")),
+            strokeWidth=alt.condition(click, alt.value(2), alt.value(0)),
             tooltip=[
                 alt.Tooltip("place:N", title="Ort"),
                 alt.Tooltip("unique_rings:Q", title="Eindeutige Ringe"),
                 alt.Tooltip("total_sightings:Q", title="Gesamte Beobachtungen"),
             ],
         )
-        .properties(title="Verteilung der Mausernden Vögel nach Orten (Rest des Jahres)", width="container", height=300)
+        .properties(
+            title="Verteilung der Mausernden Vögel nach Orten (Rest des Jahres) - Klicken Sie auf einen Balken",
+            width="container",
+            height=300,
+        )
     )
 
-    return chart
+    return chart, place_counts
 
 
 def _create_temporal_distribution_chart(df: pd.DataFrame) -> alt.Chart:
@@ -311,13 +330,26 @@ def render_moult_usecase() -> None:
     with col2:
         species = st.selectbox("Art", options=species_options, key="moult_species")
 
-    # Place selection
-    place_options = unique_nonempty(df, "place")
+    # Place selection - sorted by frequency in the dataset
+    place_counts = (
+        df.assign(place=df.get("place", "").astype(str).str.strip())
+        .loc[lambda d: d["place"] != ""]
+        .groupby("place")["place"]
+        .count()
+        .sort_values(ascending=False)
+    )
+    place_options = place_counts.index.tolist()
+
     if not place_options:
         st.error("Keine Orte in den Daten gefunden.")
         return
 
-    place = st.selectbox("Mauserort", options=place_options, key="moult_place")
+    place = st.selectbox(
+        "Mauserort",
+        options=place_options,
+        key="moult_place",
+        help="Orte sind nach Häufigkeit der Beobachtungen sortiert",
+    )
 
     st.subheader("2. Mausernde Vögel definieren")
     st.markdown("Definieren Sie, welche Vögel als 'mausernde Vögel' gelten sollen:")
@@ -367,73 +399,189 @@ def render_moult_usecase() -> None:
 
             if len(moulting_rings) == 0:
                 st.warning("Keine Vögel gefunden, die den Kriterien entsprechen.")
+                # Clear any existing results
+                if "moult_analysis_results" in st.session_state:
+                    del st.session_state.moult_analysis_results
                 return
-
-            st.success(f"**{len(moulting_rings)} eindeutige Ringe** gefunden, die den Kriterien entsprechen.")
 
             # Analyze rest of year
             all_rest_year_df, different_places_df = _analyze_rest_of_year(
                 df, list(moulting_rings), year, filter_type, place, start_month, end_month
             )
 
-            st.subheader("3. Ergebnisse")
+            # Store results in session state
+            st.session_state.moult_analysis_results = {
+                "moulting_df": moulting_df,
+                "all_rest_year_df": all_rest_year_df,
+                "different_places_df": different_places_df,
+                "moulting_place": place,
+                "num_moulting_rings": len(moulting_rings),
+            }
 
-            # Summary table
-            st.markdown("**Zusammenfassung:**")
-            summary_table = _create_movement_summary_table(moulting_df, all_rest_year_df, different_places_df, place)
+    # Display analysis results if they exist in session state
+    if "moult_analysis_results" in st.session_state:
+        results = st.session_state.moult_analysis_results
+        moulting_df = results["moulting_df"]
+        all_rest_year_df = results["all_rest_year_df"]
+        different_places_df = results["different_places_df"]
+        stored_place = results["moulting_place"]
+        num_moulting_rings = results["num_moulting_rings"]
 
-            # Format the table nicely
-            summary_styled = summary_table.copy()
-            summary_styled["Prozent"] = summary_styled["Prozent"].round(1).astype(str) + "%"
+        st.success(f"**{num_moulting_rings} eindeutige Ringe** gefunden, die den Kriterien entsprechen.")
 
-            st.dataframe(
-                summary_styled,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Kategorie": st.column_config.TextColumn("Kategorie", width="large"),
-                    "Anzahl Ringe": st.column_config.NumberColumn("Anzahl Ringe", width="medium"),
-                    "Prozent": st.column_config.TextColumn("Prozent", width="small"),
-                },
-            )
+        st.subheader("3. Ergebnisse")
 
-            if len(all_rest_year_df) > 0:
-                st.subheader("4. Detailanalyse")
+        # Summary table
+        st.markdown("**Zusammenfassung:**")
+        summary_table = _create_movement_summary_table(moulting_df, all_rest_year_df, different_places_df, stored_place)
 
-                # Place distribution chart - show only different places
-                if len(different_places_df) > 0:
-                    st.markdown("**Wo verbringen die Vögel den Rest des Jahres? (Andere Orte als Mauserort)**")
-                    place_chart = _create_place_distribution_chart(different_places_df)
-                    st.altair_chart(place_chart, use_container_width=True)
-                else:
-                    st.info(
-                        "Alle mausernden Vögel wurden nur am Mauserort oder gar nicht außerhalb der Mauserzeit gesehen."
-                    )
+        # Format the table nicely
+        summary_styled = summary_table.copy()
+        summary_styled["Prozent"] = summary_styled["Prozent"].round(1).astype(str) + "%"
 
-                # Temporal distribution chart - show all rest of year data
-                st.markdown("**Wann werden die Vögel den Rest des Jahres gesehen?**")
-                temporal_chart = _create_temporal_distribution_chart(all_rest_year_df)
-                st.altair_chart(temporal_chart, use_container_width=True)
+        st.dataframe(
+            summary_styled,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Kategorie": st.column_config.TextColumn("Kategorie", width="large"),
+                "Anzahl Ringe": st.column_config.NumberColumn("Anzahl Ringe", width="medium"),
+                "Prozent": st.column_config.TextColumn("Prozent", width="small"),
+            },
+        )
 
-                # Detailed data table
-                with st.expander("Detaillierte Beobachtungen anzeigen (alle Orte)"):
-                    display_cols = ["ring", "date", "place", "area", "status", "melder"]
-                    available_cols = [c for c in display_cols if c in all_rest_year_df.columns]
+        if len(all_rest_year_df) > 0:
+            st.subheader("4. Detailanalyse")
 
-                    if available_cols:
-                        detail_df = all_rest_year_df[available_cols].rename(columns=mapping)
-                        st.dataframe(detail_df, use_container_width=True, hide_index=True)
-                    else:
-                        st.info("Keine detaillierten Daten verfügbar.")
+            # Place distribution chart - show only different places
+            if len(different_places_df) > 0:
+                st.markdown("**Wo verbringen die Vögel den Rest des Jahres? (Andere Orte als Mauserort)**")
+                place_chart, place_counts_df = _create_place_distribution_chart(different_places_df)
 
-                # Show different places data separately
-                if len(different_places_df) > 0:
-                    with st.expander("Beobachtungen an anderen Orten"):
+                # Display the interactive chart
+                event = st.altair_chart(place_chart, use_container_width=True, on_select="rerun")
+
+                # Handle chart selection - try different possible selection formats
+                selected_places = None
+                if event.selection:
+                    # Try different ways the selection might be structured
+                    if "place" in event.selection:
+                        selected_places = event.selection["place"]
+                    elif len(event.selection) > 0:
+                        # Sometimes the selection might be structured differently
+                        for key, value in event.selection.items():
+                            if isinstance(value, list) and len(value) > 0:
+                                # Check if this contains place information
+                                if isinstance(value[0], dict) and "place" in value[0]:
+                                    selected_places = [item["place"] for item in value]
+
+                if selected_places and len(selected_places) > 0:
+                    st.markdown("**Detaillierte Beobachtungen für ausgewählte Orte:**")
+
+                    # Filter the original data for selected places
+                    selected_sightings = different_places_df[
+                        different_places_df.get("place", "").astype(str).str.strip().isin(selected_places)
+                    ]
+
+                    if len(selected_sightings) > 0:
+                        # Show summary
+                        unique_rings = selected_sightings.get("ring", "").astype(str).str.strip().nunique()
+                        total_sightings = len(selected_sightings)
+                        st.info(
+                            f"**{unique_rings} eindeutige Ringe** in **{total_sightings} Beobachtungen** an den ausgewählten Orten"
+                        )
+
+                        # Show detailed table
                         display_cols = ["ring", "date", "place", "area", "status", "melder"]
-                        available_cols = [c for c in display_cols if c in different_places_df.columns]
+                        available_cols = [c for c in display_cols if c in selected_sightings.columns]
 
                         if available_cols:
-                            detail_df = different_places_df[available_cols].rename(columns=mapping)
-                            st.dataframe(detail_df, use_container_width=True, hide_index=True)
+                            detail_df = selected_sightings[available_cols].rename(columns=mapping)
+                            # Use utility function to format dates and add links
+                            detail_df = prepare_dataframe_for_display(detail_df, selected_sightings)
+                            # Sort by date for better readability
+                            if "Datum" in detail_df.columns:
+                                detail_df = detail_df.sort_values("Datum")
+
+                            # Configure column display for links
+                            link_cfg = {}
+                            try:
+                                LinkColumn = getattr(st.column_config, "LinkColumn", None)
+                                if LinkColumn is not None:
+                                    link_cfg["Eintrag"] = LinkColumn(
+                                        "Eintrag", help="Öffnen in neuem Tab", width="small", display_text="Öffnen"
+                                    )
+                            except Exception:
+                                pass
+
+                            st.dataframe(
+                                detail_df, use_container_width=True, hide_index=True, column_config=link_cfg or None
+                            )
+                    else:
+                        st.warning("Keine Daten für die ausgewählten Orte gefunden.")
+                else:
+                    st.info(
+                        "💡 Klicken Sie auf einen Balken im Diagramm, um die detaillierten Beobachtungen für diesen Ort zu sehen."
+                    )
             else:
-                st.info("Keine Beobachtungen der mausernden Vögel außerhalb des definierten Zeitraums/Status gefunden.")
+                st.info(
+                    "Alle mausernden Vögel wurden nur am Mauserort oder gar nicht außerhalb der Mauserzeit gesehen."
+                )
+
+            # Temporal distribution chart - show all rest of year data
+            st.markdown("**Wann werden die Vögel den Rest des Jahres gesehen?**")
+            temporal_chart = _create_temporal_distribution_chart(all_rest_year_df)
+            st.altair_chart(temporal_chart, use_container_width=True)
+
+            # Detailed data table
+            with st.expander("Detaillierte Beobachtungen anzeigen (alle Orte)"):
+                display_cols = ["ring", "date", "place", "area", "status", "melder"]
+                available_cols = [c for c in display_cols if c in all_rest_year_df.columns]
+
+                if available_cols:
+                    detail_df = all_rest_year_df[available_cols].rename(columns=mapping)
+                    # Use utility function to format dates and add links
+                    detail_df = prepare_dataframe_for_display(detail_df, all_rest_year_df)
+
+                    # Configure column display for links
+                    link_cfg = {}
+                    try:
+                        LinkColumn = getattr(st.column_config, "LinkColumn", None)
+                        if LinkColumn is not None:
+                            link_cfg["Eintrag"] = LinkColumn(
+                                "Eintrag", help="Öffnen in neuem Tab", width="small", display_text="Öffnen"
+                            )
+                    except Exception:
+                        pass
+
+                    st.dataframe(detail_df, use_container_width=True, hide_index=True, column_config=link_cfg or None)
+                else:
+                    st.info("Keine detaillierten Daten verfügbar.")
+
+            # Show different places data separately
+            if len(different_places_df) > 0:
+                with st.expander("Beobachtungen an anderen Orten"):
+                    display_cols = ["ring", "date", "place", "area", "status", "melder"]
+                    available_cols = [c for c in display_cols if c in different_places_df.columns]
+
+                    if available_cols:
+                        detail_df = different_places_df[available_cols].rename(columns=mapping)
+                        # Use utility function to format dates and add links
+                        detail_df = prepare_dataframe_for_display(detail_df, different_places_df)
+
+                        # Configure column display for links
+                        link_cfg = {}
+                        try:
+                            LinkColumn = getattr(st.column_config, "LinkColumn", None)
+                            if LinkColumn is not None:
+                                link_cfg["Eintrag"] = LinkColumn(
+                                    "Eintrag", help="Öffnen in neuem Tab", width="small", display_text="Öffnen"
+                                )
+                        except Exception:
+                            pass
+
+                        st.dataframe(
+                            detail_df, use_container_width=True, hide_index=True, column_config=link_cfg or None
+                        )
+        else:
+            st.info("Keine Beobachtungen der mausernden Vögel außerhalb des definierten Zeitraums/Status gefunden.")
