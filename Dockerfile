@@ -9,9 +9,6 @@ RUN pip install uv
 COPY pyproject.toml uv.lock ./
 COPY app/ ./app/
 
-# Copy default sightings.csv (can be overridden by volume mount)
-COPY sightings.csv ./data/sightings.csv
-
 # Install dependencies with uv
 RUN uv sync --frozen
 
