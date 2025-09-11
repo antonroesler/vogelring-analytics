@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,12 @@ import streamlit as st
 
 
 def _resolve_data_path() -> Path:
+    # Check for environment variable first (for Docker/production)
+    env_path = os.getenv("SIGHTINGS_FILE_PATH")
+    if env_path:
+        return Path(env_path)
+    
+    # Fallback to default location (for local development)
     project_root = Path(__file__).resolve().parents[1]
     return project_root / "sightings.csv"
 

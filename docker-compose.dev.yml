@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  streamlit:
+    build: .
+    container_name: vogelring-analytics-dev
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    volumes:
+      # Local development - mount current directory
+      - ./app/storage:/app/app/storage
+      - ./sightings.csv:/app/data/sightings.csv
+    environment:
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_SERVER_PORT=8501
+      - SIGHTINGS_FILE_PATH=/app/data/sightings.csv

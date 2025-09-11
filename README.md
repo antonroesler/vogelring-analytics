@@ -14,6 +14,8 @@ Eine Streamlit-App zur Analyse von Vogelring-Beobachtungen auf Basis der Datei `
 
 ### Installation und Start
 
+#### Lokale Entwicklung
+
 1. Abhängigkeiten installieren
 
 ```bash
@@ -25,6 +27,29 @@ uv sync
 ```bash
 uv run streamlit run app/app.py
 ```
+
+#### Docker Deployment
+
+**Lokale Entwicklung mit Docker:**
+```bash
+docker compose -f docker-compose.dev.yml up --build
+```
+
+**Produktion (z.B. auf Raspberry Pi):**
+```bash
+docker compose up --build
+```
+
+#### Konfiguration
+
+Die App kann über Umgebungsvariablen konfiguriert werden:
+
+- `SIGHTINGS_FILE_PATH`: Pfad zur CSV-Datei (Standard: `./sightings.csv` lokal, `/app/data/sightings.csv` in Docker)
+
+**Produktionssetup:**
+- CSV-Datei wird in `/mnt/ssd/data/shared/sightings.csv` erwartet
+- Kann durch n8n-Workflows automatisch aktualisiert werden
+- Streamlit erkennt Änderungen automatisch durch `@st.cache_data`
 
 ### Funktionen
 
