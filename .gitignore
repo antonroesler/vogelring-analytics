@@ -17,3 +17,5 @@ concepts.md
 
 # Docker
 .dockerignore
+
+.env

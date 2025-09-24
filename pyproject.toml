@@ -9,6 +9,8 @@ dependencies = [
     "pandas>=2.3.2",
     "altair>=5.5.0",
     "pydeck>=0.9.1",
+    "sqlalchemy>=2.0.43",
+    "psycopg2-binary>=2.9.10",
 ]
 
 [tool.ruff]

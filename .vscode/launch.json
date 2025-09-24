@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug Streamlit",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/.venv/bin/streamlit",
+            "args": ["run", "app/app.py", "--server.port", "8502"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "DATABASE_URL": "postgresql://vogelring:your_password@localhost:5432/vogelring"
+            }
+        }
+    ]
+}

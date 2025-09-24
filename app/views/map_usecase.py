@@ -191,9 +191,9 @@ def render_map_usecase() -> None:
             st.write(f"{vmax:.2f}")
 
     # Build Layer
-    plot_df = df.copy()
+    plot_df = df.dropna(subset=["lat", "lon"]).copy()
+    
     if colors is None:
-        # default neutral fill
         colors = [[30, 144, 255, 140]] * len(plot_df)
     plot_df["__color__"] = colors
 
@@ -217,6 +217,7 @@ def render_map_usecase() -> None:
         tooltip=tooltip,
         map_style=pdk.map_styles.LIGHT,
     )
+
     st.pydeck_chart(deck, use_container_width=True)
 
     # Render legend for categorical mode

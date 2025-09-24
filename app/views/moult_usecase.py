@@ -34,6 +34,31 @@ def _month_to_bin(month: int) -> str:
     return "Unbekannt"
 
 
+def _filter_by_date_range_multi_year(df: pd.DataFrame, year_range: list[int], start_month: int, end_month: int) -> pd.DataFrame:
+    """Filter dataframe by date range across multiple years."""
+    work = df.copy()
+
+    # Ensure we have year and month columns
+    if "year" not in work.columns and "date" in work.columns:
+        parsed = pd.to_datetime(work["date"], errors="coerce")
+        work["year"] = parsed.dt.year
+        work["month"] = parsed.dt.month
+
+    # Filter by year range
+    work = work[pd.to_numeric(work.get("year"), errors="coerce").isin(year_range)]
+
+    # Filter by month range
+    month_series = pd.to_numeric(work.get("month"), errors="coerce")
+    if start_month <= end_month:
+        # Normal range (e.g., March to August)
+        work = work[(month_series >= start_month) & (month_series <= end_month)]
+    else:
+        # Wrap-around range (e.g., November to February)
+        work = work[(month_series >= start_month) | (month_series <= end_month)]
+
+    return work
+
+
 def _filter_by_date_range(df: pd.DataFrame, year: int, start_month: int, end_month: int) -> pd.DataFrame:
     """Filter dataframe by date range within a specific year."""
     work = df.copy()
@@ -68,7 +93,7 @@ def _filter_by_status(df: pd.DataFrame, status_filter: str) -> pd.DataFrame:
 
 def _find_moulting_birds(
     df: pd.DataFrame,
-    year: int,
+    year_range: list[int],
     place: str,
     species: str,
     filter_type: str,
@@ -85,11 +110,13 @@ def _find_moulting_birds(
         & (work.get("place", "").astype(str).str.strip() == place)
     ]
 
+    # Filter by year range
+    work = work[pd.to_numeric(work.get("year"), errors="coerce").isin(year_range)]
+
     # Apply the user-defined filter
     if filter_type == "Zeitraum":
-        work = _filter_by_date_range(work, year, start_month, end_month)
+        work = _filter_by_date_range_multi_year(work, year_range, start_month, end_month)
     elif filter_type == "Status":
-        work = work[pd.to_numeric(work.get("year"), errors="coerce") == year]
         work = _filter_by_status(work, status_filter)
 
     # Get unique rings (the moulting birds)
@@ -102,7 +129,7 @@ def _find_moulting_birds(
 def _analyze_rest_of_year(
     df: pd.DataFrame,
     moulting_rings: list[str],
-    year: int,
+    year_range: list[int],
     filter_type: str,
     moulting_place: str,
     start_month: int = 1,
@@ -115,10 +142,10 @@ def _analyze_rest_of_year(
         - all_rest_year_df: All sightings outside moulting period (including same place)
         - different_places_df: Only sightings at different places than moulting location
     """
-    # Get all sightings of the moulting birds in the same year
+    # Get all sightings of the moulting birds in the year range
     work = df[
         (df.get("ring", "").astype(str).str.strip().isin(moulting_rings))
-        & (pd.to_numeric(df.get("year"), errors="coerce") == year)
+        & (pd.to_numeric(df.get("year"), errors="coerce").isin(year_range))
     ].copy()
 
     # Exclude the moulting period
@@ -319,7 +346,21 @@ def render_moult_usecase() -> None:
 
     col1, col2 = st.columns(2)
     with col1:
-        year = st.selectbox("Jahr", options=years, index=len(years) - 1, key="moult_year")
+        year_mode = st.radio("Zeitraum", ["Einzelnes Jahr", "Bereich", "Alle Jahre"], horizontal=True, key="moult_year_mode")
+    
+    if year_mode == "Einzelnes Jahr":
+        with col2:
+            year = st.selectbox("Jahr", options=years, index=len(years) - 1, key="moult_year")
+        year_range = [year]
+    elif year_mode == "Bereich":
+        col2a, col2b = st.columns(2)
+        with col2a:
+            start_year = st.selectbox("Von Jahr", options=years, index=0, key="moult_start_year")
+        with col2b:
+            end_year = st.selectbox("Bis Jahr", options=years, index=len(years) - 1, key="moult_end_year")
+        year_range = list(range(start_year, end_year + 1))
+    else:  # Alle Jahre
+        year_range = years
 
     # Species selection
     species_options = unique_nonempty(df, "species")
@@ -380,21 +421,21 @@ def render_moult_usecase() -> None:
             )  # Default August
             end_month = month_names.index(end_month_name) + 1
 
-        st.info(f"Zeitraum: {start_month_name} bis {end_month_name} {year}")
+        st.info(f"Zeitraum: {start_month_name} bis {end_month_name} ({min(year_range)}-{max(year_range)})")
 
     elif filter_type == "Status":
         status_options = ["Alle"] + unique_nonempty(df, "status")
         status_filter = st.selectbox("Status", options=status_options, key="moult_status")
 
         if status_filter != "Alle":
-            st.info(f"Status: {status_filter} im Jahr {year}")
+            st.info(f"Status: {status_filter} ({min(year_range)}-{max(year_range)})")
 
     # Analysis button
     if st.button("Analyse starten", type="primary"):
         with st.spinner("Analysiere Daten..."):
             # Find moulting birds
             moulting_df, moulting_rings = _find_moulting_birds(
-                df, year, place, species, filter_type, start_month, end_month, status_filter
+                df, year_range, place, species, filter_type, start_month, end_month, status_filter
             )
 
             if len(moulting_rings) == 0:
@@ -406,7 +447,7 @@ def render_moult_usecase() -> None:
 
             # Analyze rest of year
             all_rest_year_df, different_places_df = _analyze_rest_of_year(
-                df, list(moulting_rings), year, filter_type, place, start_month, end_month
+                df, list(moulting_rings), year_range, filter_type, place, start_month, end_month
             )
 
             # Store results in session state
