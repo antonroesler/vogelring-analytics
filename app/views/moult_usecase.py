@@ -229,6 +229,7 @@ def _create_place_distribution_chart(df: pd.DataFrame) -> tuple[alt.Chart, pd.Da
 
 def _create_temporal_distribution_chart(df: pd.DataFrame) -> alt.Chart:
     """Create a chart showing temporal distribution throughout the year."""
+
     # Ensure we have month column
     work = df.copy()
     if "month" not in work.columns and "date" in work.columns:
@@ -237,28 +238,48 @@ def _create_temporal_distribution_chart(df: pd.DataFrame) -> alt.Chart:
 
     work["month_name"] = pd.to_numeric(work.get("month"), errors="coerce").map(_month_to_bin)
 
-    monthly_counts = (
-        work.groupby("month_name")
-        .agg({"ring": "nunique", "id": "count"})
-        .rename(columns={"ring": "unique_rings", "id": "total_sightings"})
+    # Get top 5 places by unique rings
+    place_counts = work.groupby("place")["ring"].nunique().sort_values(ascending=False)
+    top_5_places = place_counts.head(5).index.tolist()
+
+    # Group places: top 5 + "Andere"
+    work["place_grouped"] = work["place"].apply(lambda x: x if x in top_5_places else "Andere")
+
+    # Create monthly counts by place
+    monthly_place_counts = (
+        work.groupby(["month_name", "place_grouped"])
+        .agg({"ring": "nunique"})
+        .rename(columns={"ring": "unique_rings"})
         .reset_index()
     )
 
-    # Ensure all months are present
+    # Ensure all months and places are present
     all_months = pd.DataFrame({"month_name": _get_month_bins()})
-    monthly_counts = all_months.merge(monthly_counts, how="left", on="month_name").fillna(0)
+    all_places = pd.DataFrame({"place_grouped": top_5_places + ["Andere"]})
+    month_place_grid = all_months.assign(key=1).merge(all_places.assign(key=1), on="key").drop("key", axis=1)
+    monthly_place_counts = month_place_grid.merge(
+        monthly_place_counts, how="left", on=["month_name", "place_grouped"]
+    ).fillna(0)
+
+    # Create sort order: "Andere" = 0 (bottom), then top 5 places in descending order (1-5)
+    place_order_map = {"Andere": 0}
+    for i, place in enumerate(top_5_places):
+        place_order_map[place] = i + 1
+
+    monthly_place_counts["sort_order"] = monthly_place_counts["place_grouped"].map(place_order_map)
 
     chart = (
-        alt.Chart(monthly_counts)
+        alt.Chart(monthly_place_counts)
         .mark_bar()
         .encode(
             x=alt.X("month_name:N", title="Monat", sort=_get_month_bins()),
             y=alt.Y("unique_rings:Q", title="Anzahl eindeutiger Ringe"),
-            color=alt.Color("unique_rings:Q", scale=alt.Scale(scheme="blues"), title="Ringe"),
+            color=alt.Color("place_grouped:N", title="Ort", scale=alt.Scale(scheme="category10")),
+            order=alt.Order("sort_order:O"),
             tooltip=[
                 alt.Tooltip("month_name:N", title="Monat"),
+                alt.Tooltip("place_grouped:N", title="Ort"),
                 alt.Tooltip("unique_rings:Q", title="Eindeutige Ringe"),
-                alt.Tooltip("total_sightings:Q", title="Gesamte Beobachtungen"),
             ],
         )
         .properties(title="Zeitliche Verteilung der Beobachtungen (Rest des Jahres)", width="container", height=300)
