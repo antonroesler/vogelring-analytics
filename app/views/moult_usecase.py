@@ -198,7 +198,12 @@ def _create_place_distribution_chart(df: pd.DataFrame) -> tuple[alt.Chart, pd.Da
         .add_params(click)
         .encode(
             x=alt.X("unique_rings:Q", title="Anzahl eindeutiger Ringe"),
-            y=alt.Y("place:N", title="Ort", sort="-x"),
+            y=alt.Y(
+                "place:N",
+                title="Ort",
+                sort="-x",
+                axis=alt.Axis(labelLimit=300, labelOverlap="greedy"),
+            ),
             color=alt.condition(
                 click,
                 alt.Color("unique_rings:Q", scale=alt.Scale(scheme="viridis"), title="Ringe"),
@@ -213,9 +218,9 @@ def _create_place_distribution_chart(df: pd.DataFrame) -> tuple[alt.Chart, pd.Da
             ],
         )
         .properties(
-            title="Verteilung der Mausernden Vögel nach Orten (Rest des Jahres) - Klicken Sie auf einen Balken",
+            title="Verteilung der Mausernden Vögel nach Orten",
             width="container",
-            height=300,
+            height=128 + 32 * len(place_counts),
         )
     )
 
