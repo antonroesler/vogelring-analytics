@@ -34,7 +34,9 @@ def _month_to_bin(month: int) -> str:
     return "Unbekannt"
 
 
-def _filter_by_date_range_multi_year(df: pd.DataFrame, year_range: list[int], start_month: int, end_month: int) -> pd.DataFrame:
+def _filter_by_date_range_multi_year(
+    df: pd.DataFrame, year_range: list[int], start_month: int, end_month: int
+) -> pd.DataFrame:
     """Filter dataframe by date range across multiple years."""
     work = df.copy()
 
@@ -141,6 +143,7 @@ def _analyze_rest_of_year(
         tuple: (all_rest_year_df, different_places_df)
         - all_rest_year_df: All sightings outside moulting period (including same place)
         - different_places_df: Only sightings at different places than moulting location
+        - moulting_place_df: Only sightings at moulting location
     """
     # Get all sightings of the moulting birds in the year range
     work = df[
@@ -166,8 +169,9 @@ def _analyze_rest_of_year(
     # Split into same place vs different places
     all_rest_year = work.copy()
     different_places = work[work.get("place", "").astype(str).str.strip() != moulting_place].copy()
+    moulting_place = work[work.get("place", "").astype(str).str.strip() == moulting_place].copy()
 
-    return all_rest_year, different_places
+    return all_rest_year, different_places, moulting_place
 
 
 def _create_place_distribution_chart(df: pd.DataFrame) -> tuple[alt.Chart, pd.DataFrame]:
@@ -259,7 +263,11 @@ def _create_temporal_distribution_chart(df: pd.DataFrame) -> alt.Chart:
 
 
 def _create_movement_summary_table(
-    moulting_df: pd.DataFrame, all_rest_year_df: pd.DataFrame, different_places_df: pd.DataFrame, moulting_place: str
+    moulting_df: pd.DataFrame,
+    all_rest_year_df: pd.DataFrame,
+    different_places_df: pd.DataFrame,
+    moulting_place: str,
+    moulting_place_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """Create a summary table of bird movements."""
     total_moulting_rings = moulting_df.get("ring", "").astype(str).str.strip().nunique()
@@ -267,41 +275,51 @@ def _create_movement_summary_table(
     # Get unique rings for each category
     all_rest_year_rings = set(all_rest_year_df.get("ring", "").astype(str).str.strip().unique())
     different_places_rings = set(different_places_df.get("ring", "").astype(str).str.strip().unique())
+    moulting_place_rings = set(moulting_place_df.get("ring", "").astype(str).str.strip().unique())
+
+    st.write(f"X: {all_rest_year_rings - (different_places_rings | moulting_place_rings)}")
 
     # Birds seen anywhere in the rest of the year (including same place)
     seen_rest_of_year = len(all_rest_year_rings)
 
-    # Birds only seen at moulting place (not seen elsewhere during rest of year)
-    only_moulting_place = total_moulting_rings - seen_rest_of_year
+    seen_moulting_place_during_rest_of_year = len(moulting_place_rings)
 
-    # Birds seen at same place during rest of year
-    same_place_rings = all_rest_year_rings - different_places_rings
-    same_place_rest = len(same_place_rings)
+    # Birds only seen at moulting place (not seen during rest of year)
+    only_seen_during_moulting_period = total_moulting_rings - seen_rest_of_year
 
     # Birds seen at different places during rest of year
     different_places_count = len(different_places_rings)
+
+    only_seen_at_moulting_place_during_rest_of_year = len(moulting_place_rings - different_places_rings)
 
     summary = pd.DataFrame(
         {
             "Kategorie": [
                 "Gesamt (Mausernde Vögel)",
-                "Im Rest des Jahres gesehen",
+                "Im Rest des Zeitraums gesehen",
                 "Nur während Mauserzeit gesehen",
-                "Am selben Ort (Rest des Jahres)",
-                "An anderen Orten gesehen",
+                "Am Mauserort gesehen (Rest des Zeitraums)",
+                "Ausschließlich am Mauserort gesehen (Rest des Zeitraums)",
+                "Auch an anderen Orten gesehen (Rest des Zeitraums)",
             ],
             "Anzahl Ringe": [
                 total_moulting_rings,
                 seen_rest_of_year,
-                only_moulting_place,
-                same_place_rest,
+                only_seen_during_moulting_period,
+                seen_moulting_place_during_rest_of_year,
+                only_seen_at_moulting_place_during_rest_of_year,
                 different_places_count,
             ],
             "Prozent": [
                 100.0,
                 (seen_rest_of_year / total_moulting_rings * 100) if total_moulting_rings > 0 else 0,
-                (only_moulting_place / total_moulting_rings * 100) if total_moulting_rings > 0 else 0,
-                (same_place_rest / total_moulting_rings * 100) if total_moulting_rings > 0 else 0,
+                (only_seen_during_moulting_period / total_moulting_rings * 100) if total_moulting_rings > 0 else 0,
+                (seen_moulting_place_during_rest_of_year / total_moulting_rings * 100)
+                if total_moulting_rings > 0
+                else 0,
+                (only_seen_at_moulting_place_during_rest_of_year / total_moulting_rings * 100)
+                if total_moulting_rings > 0
+                else 0,
                 (different_places_count / total_moulting_rings * 100) if total_moulting_rings > 0 else 0,
             ],
         }
@@ -346,8 +364,10 @@ def render_moult_usecase() -> None:
 
     col1, col2 = st.columns(2)
     with col1:
-        year_mode = st.radio("Zeitraum", ["Einzelnes Jahr", "Bereich", "Alle Jahre"], horizontal=True, key="moult_year_mode")
-    
+        year_mode = st.radio(
+            "Zeitraum", ["Einzelnes Jahr", "Bereich", "Alle Jahre"], horizontal=True, key="moult_year_mode"
+        )
+
     if year_mode == "Einzelnes Jahr":
         with col2:
             year = st.selectbox("Jahr", options=years, index=len(years) - 1, key="moult_year")
@@ -446,7 +466,7 @@ def render_moult_usecase() -> None:
                 return
 
             # Analyze rest of year
-            all_rest_year_df, different_places_df = _analyze_rest_of_year(
+            all_rest_year_df, different_places_df, moulting_place_df = _analyze_rest_of_year(
                 df, list(moulting_rings), year_range, filter_type, place, start_month, end_month
             )
 
@@ -455,6 +475,7 @@ def render_moult_usecase() -> None:
                 "moulting_df": moulting_df,
                 "all_rest_year_df": all_rest_year_df,
                 "different_places_df": different_places_df,
+                "moulting_place_df": moulting_place_df,
                 "moulting_place": place,
                 "num_moulting_rings": len(moulting_rings),
             }
@@ -465,6 +486,7 @@ def render_moult_usecase() -> None:
         moulting_df = results["moulting_df"]
         all_rest_year_df = results["all_rest_year_df"]
         different_places_df = results["different_places_df"]
+        moulting_place_df = results["moulting_place_df"]
         stored_place = results["moulting_place"]
         num_moulting_rings = results["num_moulting_rings"]
 
@@ -474,7 +496,9 @@ def render_moult_usecase() -> None:
 
         # Summary table
         st.markdown("**Zusammenfassung:**")
-        summary_table = _create_movement_summary_table(moulting_df, all_rest_year_df, different_places_df, stored_place)
+        summary_table = _create_movement_summary_table(
+            moulting_df, all_rest_year_df, different_places_df, stored_place, moulting_place_df
+        )
 
         # Format the table nicely
         summary_styled = summary_table.copy()
