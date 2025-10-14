@@ -303,8 +303,6 @@ def _create_movement_summary_table(
     different_places_rings = set(different_places_df.get("ring", "").astype(str).str.strip().unique())
     moulting_place_rings = set(moulting_place_df.get("ring", "").astype(str).str.strip().unique())
 
-    st.write(f"X: {all_rest_year_rings - (different_places_rings | moulting_place_rings)}")
-
     # Birds seen anywhere in the rest of the year (including same place)
     seen_rest_of_year = len(all_rest_year_rings)
 
@@ -496,9 +494,15 @@ def render_moult_usecase() -> None:
                 df, list(moulting_rings), year_range, filter_type, place, start_month, end_month
             )
 
+            all_year_df = df[
+                df.get("ring", "").astype(str).str.strip().isin(moulting_rings)
+                & (pd.to_numeric(df.get("year"), errors="coerce").isin(year_range))
+            ]
+
             # Store results in session state
             st.session_state.moult_analysis_results = {
                 "moulting_df": moulting_df,
+                "all_year_df": all_year_df,
                 "all_rest_year_df": all_rest_year_df,
                 "different_places_df": different_places_df,
                 "moulting_place_df": moulting_place_df,
@@ -621,7 +625,7 @@ def render_moult_usecase() -> None:
 
             # Temporal distribution chart - show all rest of year data
             st.markdown("**Wann werden die Vögel den Rest des Jahres gesehen?**")
-            temporal_chart = _create_temporal_distribution_chart(all_rest_year_df)
+            temporal_chart = _create_temporal_distribution_chart(results["all_year_df"])
             st.altair_chart(temporal_chart, use_container_width=True)
 
             # Detailed data table
