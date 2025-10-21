@@ -39,7 +39,10 @@ def _apply_filters(df: pd.DataFrame, filters: list[dict[str, Any]] | None) -> pd
             continue
         if ftype == "equals":
             value = f.get("value", "")
-            result = result[result[col] == value]
+            if str(value).isnumeric():
+                result = result[result[col] == float(value)]
+            else:
+                result = result[result[col] == value]
         elif ftype == "multi":
             values = f.get("values", [])
             if len(values) > 0:
@@ -133,6 +136,8 @@ def _filter_builder_ui(df: pd.DataFrame) -> list[dict[str, Any]]:
             "family_size",
             "small_group_size",
             "large_group_size",
+            "year",
+            "month",
         }
         is_boolean = column_internal in {"melded", "is_exact_location"}
         is_categorical = column_internal in {

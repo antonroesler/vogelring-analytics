@@ -57,45 +57,59 @@ def load_data() -> pd.DataFrame:
             """)
             result = db.execute(query)
             df = pd.DataFrame(result.fetchall(), columns=result.keys())
-            
+
             # Apply same type conversions as CSV version
             for date_col in ["date", "ringing_date"]:
                 if date_col in df.columns:
                     df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-            
+
             for bool_col in ["melded", "is_exact_location"]:
                 if bool_col in df.columns:
                     df[bool_col] = df[bool_col].map(_parse_boolean)
-            
+
             for float_col in ["lat", "lon", "ringing_lat", "ringing_lon"]:
                 if float_col in df.columns:
                     df[float_col] = pd.to_numeric(df[float_col], errors="coerce")
 
             # Convert UUID and integer columns to strings/proper types
             for col in df.columns:
-                if df[col].dtype == 'object':
+                if df[col].dtype == "object":
                     # Convert UUIDs to strings
                     df[col] = df[col].astype(str)
-                elif str(df[col].dtype).startswith('Int'):
+                elif str(df[col].dtype).startswith("Int"):
                     # Convert nullable integers to regular integers
                     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
 
             # Keep text columns as strings and handle NaN
             for text_col in [
-                "species", "ring", "reading", "place", "area", "sex", "age", "partner",
-                "status", "habitat", "field_fruit", "comment", "melder",
-                "ringing_ring_scheme", "ringing_species", "ringing_place", "ringing_ringer"
+                "species",
+                "ring",
+                "reading",
+                "place",
+                "area",
+                "sex",
+                "age",
+                "partner",
+                "status",
+                "habitat",
+                "field_fruit",
+                "comment",
+                "melder",
+                "ringing_ring_scheme",
+                "ringing_species",
+                "ringing_place",
+                "ringing_ringer",
             ]:
                 if text_col in df.columns:
                     df[text_col] = df[text_col].fillna("").astype(str)
-            
+
             # Convenience derived columns
             if "date" in df.columns:
                 df["year"] = df["date"].dt.year
                 df["month"] = df["date"].dt.month
-                
+
             return df
-            
+
     except Exception as e:
         st.warning(f"Database connection failed, falling back to CSV: {e}")
         return load_data_from_csv()

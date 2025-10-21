@@ -1,6 +1,8 @@
 mapping = {
     "id": "ID",
     "date": "Datum",
+    "month": "Monat",
+    "year": "Jahr",
     "time": "Uhrzeit",
     "place": "Ort",
     "species": "Art",
