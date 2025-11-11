@@ -172,6 +172,6 @@ def load_data_from_csv() -> pd.DataFrame:
 def unique_nonempty(df: pd.DataFrame, column: str) -> list[str]:
     if column not in df.columns:
         return []
-    values = df[column].dropna().astype(str).map(str.strip).loc[lambda s: s != ""].unique().tolist()
+    values = df[column].dropna().loc[lambda s: s != ""].unique().tolist()
     values.sort()
     return values

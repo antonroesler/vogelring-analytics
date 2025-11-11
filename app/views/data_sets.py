@@ -89,8 +89,8 @@ def _filter_builder_ui(df: pd.DataFrame) -> list[dict[str, Any]]:
                 "equals": "Gleich",
                 "multi": "Mehrfach",
                 "contains": "Enthält",
-                "date_range": "Datum-Bereich",
-                "number_range": "Zahlen-Bereich",
+                "date_range": "Datumsbereich",
+                "number_range": "Zahlenbereich",
             }.get(f.get("type", ""), f.get("type", ""))
             desc = type_label
             if f.get("type") == "multi":
@@ -300,7 +300,7 @@ def _load_into_builder(name: str) -> None:
 
 
 def render_data_sets() -> None:
-    st.header("Datensätze")
+    st.header("Datensatz Erstellung und Bearbeitung")
 
     df_all = load_data()
     _ensure_builder_state()
@@ -394,6 +394,10 @@ def render_data_sets() -> None:
             link_cfg = {**link_cfg, **date_cfg}
     except Exception:
         pass
+
+    if len(disp) == 0:
+        st.warning("Keine Daten zum Anzeigen. Die Kombination der Filter führt zu keinem Ergebnis.")
+        return
 
     edited = st.data_editor(
         disp,
